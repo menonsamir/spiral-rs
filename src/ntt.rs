@@ -206,6 +206,7 @@ pub fn ntt_forward_alt(params: &Params, operand_overall: &mut [u64]) {
     }
 }
 
+#[cfg(target_feature = "avx2")]
 pub fn ntt_forward(params: &Params, operand_overall: &mut [u64]) {
     if params.crt_count == 1 {
         ntt_forward_alt(params, operand_overall);
