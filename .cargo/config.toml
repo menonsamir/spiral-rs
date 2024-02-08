@@ -1,0 +1,10 @@
+# [target.'cfg(target_feature = "avx2")']
+# rustflags = ["-C", "target-feature=+avx2"]
+
+[build]
+rustflags = [
+  "-C",
+  "target-feature=+avx2,+avx512bf16,+avx512bitalg,+avx512bw,+avx512cd,+avx512dq,+avx512er,+avx512f,+avx512ifma,+avx512pf,+avx512vbmi,+avx512vbmi2,+avx512vl,+avx512vnni,+avx512vp2intersect,+avx512vpopcntdq,+sse,+sse2,+sse3,+sse4.1,+sse4.2,+sse4a,+ssse3",
+  "-C",
+  "target-cpu=native",
+]
