@@ -556,7 +556,11 @@ pub fn multiply(res: &mut PolyMatrixNTT, a: &PolyMatrixNTT, b: &PolyMatrixNTT) {
                 let res_poly = res.get_poly_mut(i, j);
                 let pol1 = a.get_poly(i, k);
                 let pol2 = b.get_poly(k, j);
-                multiply_add_poly(params, res_poly, pol1, pol2);
+                if params.crt_count == 1 {
+                    multiply_poly(params, res_poly, pol1, pol2);
+                } else {
+                    multiply_poly_avx(params, res_poly, pol1, pol2);
+                }
             }
         }
     }
@@ -578,7 +582,11 @@ pub fn multiply(res: &mut PolyMatrixNTT, a: &PolyMatrixNTT, b: &PolyMatrixNTT) {
             for k in 0..a.cols {
                 let pol1 = a.get_poly(i, k);
                 let pol2 = b.get_poly(k, j);
-                multiply_add_poly_avx(params, res_poly, pol1, pol2);
+                if params.crt_count == 1 {
+                    multiply_poly(params, res_poly, pol1, pol2);
+                } else {
+                    multiply_poly_avx(params, res_poly, pol1, pol2);
+                }
             }
             modular_reduce(params, res_poly);
         }

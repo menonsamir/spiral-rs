@@ -226,7 +226,8 @@ impl<'a> PublicParameters<'a> {
         idx += deserialize_vec_polymatrix_rng(&mut v_packing, &data[idx..], &mut rng);
 
         if params.expand_queries {
-            let mut v_expansion_left = new_vec_raw(params, params.g(), 2, params.t_exp_left);
+            let mut v_expansion_left =
+                new_vec_raw(params, params.g().min(MAX_EXP_DIM), 2, params.t_exp_left);
             idx += deserialize_vec_polymatrix_rng(&mut v_expansion_left, &data[idx..], &mut rng);
 
             let mut v_expansion_right = v_expansion_left.clone();
@@ -314,9 +315,19 @@ impl<'a> Query<'a> {
         let mut rng = ChaCha20Rng::from_seed(seed);
         data = &data[SEED_LENGTH..];
         if params.expand_queries {
-            let mut ct = PolyMatrixRaw::zero(params, 2, 1);
-            deserialize_polymatrix_rng(&mut ct, data, &mut rng);
-            out.ct = Some(ct);
+            let num_query_cts = if params.db_dim_1 > MAX_EXP_DIM {
+                1 << (params.db_dim_1 - MAX_EXP_DIM)
+            } else {
+                1
+            };
+
+            let mut cts = Vec::new();
+            for _ in 0..num_query_cts {
+                let ct = PolyMatrixRaw::zero(params, 2, 1);
+                cts.push(ct);
+            }
+            deserialize_vec_polymatrix_rng(&mut cts, &data, &mut rng);
+            out.v_ct = Some(cts);
         } else {
             // let v_buf_bytes = params.query_v_buf_bytes();
             // let v_buf: Vec<u64> = (&data[..v_buf_bytes])

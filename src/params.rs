@@ -1,6 +1,12 @@
 use std::mem::size_of;
 
-use crate::{arith::*, client::SEED_LENGTH, ntt::*, number_theory::*, poly::*};
+use crate::{
+    arith::*,
+    client::{MAX_EXP_DIM, SEED_LENGTH},
+    ntt::*,
+    number_theory::*,
+    poly::*,
+};
 
 pub const MAX_MODULI: usize = 4;
 
@@ -151,7 +157,7 @@ impl Params {
         sz_polys += num_packing_mats * packing_sz;
 
         if self.expand_queries {
-            let expansion_left_sz = self.g() * self.t_exp_left;
+            let expansion_left_sz = self.g().min(MAX_EXP_DIM) * self.t_exp_left;
             let mut expansion_right_sz = (self.stop_round() + 1) * self.t_exp_right;
             let conversion_sz = 2 * self.t_conv;
 
@@ -168,13 +174,16 @@ impl Params {
 
     pub fn query_bytes(&self) -> usize {
         let sz_polys;
+        let num_query_cts = if self.db_dim_1 > MAX_EXP_DIM {
+            1 << (self.db_dim_1 - MAX_EXP_DIM)
+        } else {
+            1
+        };
 
         if self.expand_queries {
-            sz_polys = 1;
+            sz_polys = num_query_cts;
         } else {
-            let first_dimension_sz = self.num_expanded();
-            let further_dimension_sz = self.db_dim_2 * (2 * self.t_gsw);
-            sz_polys = first_dimension_sz + further_dimension_sz;
+            sz_polys = self.db_dim_1 * 2 * self.t_gsw;
         }
 
         let sz_bytes = sz_polys * self.poly_len * size_of::<u64>();
