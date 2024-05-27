@@ -1059,6 +1059,8 @@ mod test {
 
     #[test]
     fn no_expansion_query_serialization_is_correct() {
-        query_serialization_is_correct_for_params(get_no_expansion_testing_params())
+        let mut p = get_no_expansion_testing_params();
+        p.db_dim_2 = 0;
+        query_serialization_is_correct_for_params(p)
     }
 }

@@ -1,9 +1,9 @@
 [package]
 name = "spiral-rs"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
-authors = ["Samir Menon <samir@blyss.dev>", "Neil Movva <neil@blyss.dev>"]
-homepage = "https://blyss.dev"
+authors = ["Samir Menon <menon.samir@gmail.com>"]
+homepage = "https://github.com/menonsamir/spiral-rs"
 repository = "https://github.com/menonsamir/spiral-rs"
 description = "Rust implementation of the Spiral PIR scheme"
 keywords = ["privacy", "fhe", "cryptography"]
@@ -12,6 +12,8 @@ readme = "README.md"
 license = "MIT"
 
 [features]
+default = ["skip-avx512"]
+skip-avx512 = []
 server = ["rayon"]
 
 [dependencies]

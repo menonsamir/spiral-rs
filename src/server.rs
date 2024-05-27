@@ -8,7 +8,6 @@ use crate::aligned_memory::*;
 use crate::arith::*;
 use crate::client::PublicParameters;
 use crate::client::Query;
-use crate::client::CLIENT_TEST;
 use crate::gadget::*;
 use crate::params::*;
 use crate::poly::*;
@@ -602,7 +601,7 @@ pub fn variance(v: Vec<i64>) -> f64 {
     sum / n as f64
 }
 
-fn dec_to_raw<'a>(
+pub fn dec_to_raw<'a>(
     params: &'a Params,
     poly: &PolyMatrixRaw<'a>,
     target: &PolyMatrixRaw<'a>,
@@ -709,24 +708,6 @@ pub fn process_query(
                 }
 
                 fold_ciphertexts(params, &mut intermediate_raw, &v_folding, &v_folding_neg);
-
-                if instance == 0 && trial == 0 {
-                    unsafe {
-                        if let Some((sk_reg, target)) = &CLIENT_TEST {
-                            let ct = intermediate_raw[0].ntt();
-                            let ct_subset = ct.submatrix(0, 0, 2, 1);
-                            let dec = (&sk_reg.ntt() * &ct_subset).raw();
-                            let dec_raw = dec_to_raw(params, &dec, target);
-                            for i in 0..params.poly_len {
-                                assert_eq!(
-                                    dec_raw.data[i], target.data[i],
-                                    "{} != {} at {}",
-                                    dec_raw.data[i], target.data[i], i
-                                );
-                            }
-                        }
-                    }
-                }
 
                 v_ct.push(intermediate_raw[0].clone());
             }
@@ -1089,7 +1070,7 @@ mod test {
         }
 
         let now = Instant::now();
-        for (i, gi_ct_ntt) in gi_ct_ntts.iter_mut().enumerate() {
+        for (_i, gi_ct_ntt) in gi_ct_ntts.iter_mut().enumerate() {
             // to_ntt_no_reduce(&mut gi_ct_ntts[i], gi_ct);
             ntt_forward(&params, gi_ct_ntt.as_mut_slice());
         }

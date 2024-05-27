@@ -1,4 +1,5 @@
-#![feature(stdarch_x86_avx512)]
+#![cfg_attr(not(feature = "avoid-avx512"), feature(avx512_target_feature))]
+#![cfg_attr(not(feature = "avoid-avx512"), feature(stdarch_x86_avx512))]
 
 pub mod aligned_memory;
 pub mod arith;
