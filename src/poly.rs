@@ -401,6 +401,22 @@ pub fn multiply_poly(params: &Params, res: &mut [u64], a: &[u64], b: &[u64]) {
     }
 }
 
+pub fn multiply_add_poly_fast(params: &Params, res: &mut [u64], a: &[u64], b: &[u64]) {
+    for c in 0..params.crt_count {
+        unsafe {
+            let p_x = &a[c * params.poly_len] as *const u64;
+            let p_y = &b[c * params.poly_len] as *const u64;
+            let p_z = &mut res[c * params.poly_len] as *mut u64;
+            for i in 0..params.poly_len {
+                let x = *p_x.add(i);
+                let y = *p_y.add(i);
+                let product = x.wrapping_mul(y);
+                *p_z.add(i) = (*p_z.add(i)).wrapping_add(product);
+            }
+        }
+    }
+}
+
 pub fn multiply_add_poly(params: &Params, res: &mut [u64], a: &[u64], b: &[u64]) {
     for c in 0..params.crt_count {
         for i in 0..params.poly_len {
@@ -557,9 +573,9 @@ pub fn multiply(res: &mut PolyMatrixNTT, a: &PolyMatrixNTT, b: &PolyMatrixNTT) {
                 let pol1 = a.get_poly(i, k);
                 let pol2 = b.get_poly(k, j);
                 if params.crt_count == 1 {
-                    multiply_poly(params, res_poly, pol1, pol2);
+                    multiply_add_poly(params, res_poly, pol1, pol2);
                 } else {
-                    multiply_poly_avx(params, res_poly, pol1, pol2);
+                    multiply_add_poly_fast(params, res_poly, pol1, pol2);
                 }
             }
         }
@@ -583,9 +599,9 @@ pub fn multiply(res: &mut PolyMatrixNTT, a: &PolyMatrixNTT, b: &PolyMatrixNTT) {
                 let pol1 = a.get_poly(i, k);
                 let pol2 = b.get_poly(k, j);
                 if params.crt_count == 1 {
-                    multiply_poly(params, res_poly, pol1, pol2);
+                    multiply_add_poly(params, res_poly, pol1, pol2);
                 } else {
-                    multiply_poly_avx(params, res_poly, pol1, pol2);
+                    multiply_add_poly_avx(params, res_poly, pol1, pol2);
                 }
             }
             modular_reduce(params, res_poly);
