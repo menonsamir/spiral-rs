@@ -575,7 +575,7 @@ pub fn multiply(res: &mut PolyMatrixNTT, a: &PolyMatrixNTT, b: &PolyMatrixNTT) {
                 if params.crt_count == 1 {
                     multiply_add_poly(params, res_poly, pol1, pol2);
                 } else {
-                    multiply_add_poly_fast(params, res_poly, pol1, pol2);
+                    multiply_add_poly(params, res_poly, pol1, pol2);
                 }
             }
         }

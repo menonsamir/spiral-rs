@@ -1,7 +1,6 @@
 use crate::{
     arith::*, discrete_gaussian::*, gadget::*, number_theory::*, params::*, poly::*, util::*,
 };
-use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use std::{iter::once, mem::size_of};
@@ -125,22 +124,6 @@ fn _interleave_rng_data(params: &Params, v_buf: &[u64], rng: &mut ChaCha20Rng) -
         out.push(v_buf[i]);
     }
     out
-}
-
-fn gen_ternary_mat(mat: &mut PolyMatrixRaw, hamming: usize, rng: &mut ChaCha20Rng) {
-    let modulus = mat.params.modulus;
-    for r in 0..mat.rows {
-        for c in 0..mat.cols {
-            let pol = mat.get_poly_mut(r, c);
-            for i in 0..hamming {
-                pol[i] = 1;
-            }
-            for i in hamming..2 * hamming {
-                pol[i] = modulus - 1;
-            }
-            pol.shuffle(rng);
-        }
-    }
 }
 
 /// The maximum number of expansion rounds supported for a single ciphertext.
@@ -609,8 +592,8 @@ impl<'a> Client<'a> {
     }
 
     fn generate_secret_keys_impl(&mut self, rng: &mut ChaCha20Rng) {
-        gen_ternary_mat(&mut self.sk_gsw, HAMMING_WEIGHT, rng);
-        gen_ternary_mat(&mut self.sk_reg, HAMMING_WEIGHT, rng);
+        self.dg.sample_matrix(&mut self.sk_gsw, rng);
+        self.dg.sample_matrix(&mut self.sk_reg, rng);
         self.sk_gsw_full = matrix_with_identity(&self.sk_gsw);
         self.sk_reg_full = matrix_with_identity(&self.sk_reg);
     }
