@@ -609,6 +609,32 @@ pub fn multiply(res: &mut PolyMatrixNTT, a: &PolyMatrixNTT, b: &PolyMatrixNTT) {
     }
 }
 
+#[cfg(not(target_feature = "avx2"))]
+pub fn multiply_no_reduce(
+    res: &mut PolyMatrixNTT,
+    a: &PolyMatrixNTT,
+    b: &PolyMatrixNTT,
+    start_inner_dim: usize,
+) {
+    assert_eq!(res.rows, a.rows);
+    assert_eq!(res.cols, b.cols);
+    assert_eq!(a.cols, b.rows);
+
+    let params = res.params;
+    for i in 0..a.rows {
+        for j in 0..b.cols {
+            let res_poly = res.get_poly_mut(i, j);
+            for k in start_inner_dim..a.cols {
+                let pol1 = a.get_poly(i, k);
+                let pol2 = b.get_poly(k, j);
+                for z in 0..params.poly_len * params.crt_count {
+                    res_poly[z] = pol1[z] * pol2[z];
+                }
+            }
+        }
+    }
+}
+
 #[cfg(target_feature = "avx2")]
 pub fn multiply_no_reduce(
     res: &mut PolyMatrixNTT,
