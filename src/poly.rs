@@ -628,7 +628,7 @@ pub fn multiply_no_reduce(
                 let pol1 = a.get_poly(i, k);
                 let pol2 = b.get_poly(k, j);
                 for z in 0..params.poly_len * params.crt_count {
-                    res_poly[z] = pol1[z] * pol2[z];
+                    res_poly[z] += pol1[z] * pol2[z];
                 }
             }
         }
