@@ -1057,4 +1057,248 @@ mod test {
         p.db_dim_2 = 0;
         query_serialization_is_correct_for_params(p)
     }
+
+    // ---------------------------------------------------------------
+    // Isolated tests for the YPIR-consumed client APIs:
+    //   generate_secret_keys, generate_secret_keys_from_seed,
+    //   encrypt_matrix_reg, decrypt_matrix_reg, get_sk_reg
+    // ---------------------------------------------------------------
+
+    fn decrypt_and_rescale(params: &Params, dec_raw: &PolyMatrixRaw, idx: usize) -> u64 {
+        let scale_k = params.modulus / params.pt_modulus;
+        let mut val = dec_raw.data[idx] as i64;
+        if val >= (params.modulus / 2) as i64 {
+            val -= params.modulus as i64;
+        }
+        let rounded = f64::round(val as f64 / scale_k as f64) as i64;
+        ((rounded % params.pt_modulus as i64 + params.pt_modulus as i64) % params.pt_modulus as i64)
+            as u64
+    }
+
+    #[test]
+    fn generate_secret_keys_produces_small_norm_keys() {
+        let params = get_params();
+        let mut client = Client::init(&params);
+        client.generate_secret_keys();
+
+        let threshold = (10.0 * params.noise_width) as u64;
+        for i in 0..client.sk_reg.data.len() {
+            let val = client.sk_reg.data[i];
+            assert!(
+                val < threshold || (params.modulus - val) < threshold,
+                "sk_reg[{}] = {} not small (threshold {})",
+                i,
+                val,
+                threshold
+            );
+        }
+        for i in 0..client.sk_gsw.data.len() {
+            let val = client.sk_gsw.data[i];
+            assert!(
+                val < threshold || (params.modulus - val) < threshold,
+                "sk_gsw[{}] = {} not small (threshold {})",
+                i,
+                val,
+                threshold
+            );
+        }
+    }
+
+    #[test]
+    fn generate_secret_keys_from_seed_is_deterministic() {
+        let params = get_params();
+        let seed: Seed = [
+            0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d,
+            0x1e, 0x1f, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b,
+            0x2c, 0x2d, 0x2e, 0x2f,
+        ];
+
+        let mut client1 = Client::init(&params);
+        client1.generate_secret_keys_from_seed(seed);
+
+        let mut client2 = Client::init(&params);
+        client2.generate_secret_keys_from_seed(seed);
+
+        assert_eq!(client1.sk_reg.data.as_slice(), client2.sk_reg.data.as_slice());
+        assert_eq!(client1.sk_gsw.data.as_slice(), client2.sk_gsw.data.as_slice());
+    }
+
+    #[test]
+    fn generate_secret_keys_from_different_seeds_differ() {
+        let params = get_params();
+        let seed_a: Seed = [0xAA; 32];
+        let seed_b: Seed = [0xBB; 32];
+
+        let mut client_a = Client::init(&params);
+        client_a.generate_secret_keys_from_seed(seed_a);
+
+        let mut client_b = Client::init(&params);
+        client_b.generate_secret_keys_from_seed(seed_b);
+
+        assert_ne!(
+            client_a.sk_reg.data.as_slice(),
+            client_b.sk_reg.data.as_slice()
+        );
+    }
+
+    #[test]
+    fn get_sk_reg_matches_internal_key() {
+        let params = get_params();
+        let mut client = Client::init(&params);
+        client.generate_secret_keys();
+
+        let sk = client.get_sk_reg();
+        assert_eq!(sk.rows, 1);
+        assert_eq!(sk.cols, 1);
+        assert_eq!(sk.data.as_slice(), client.sk_reg.data.as_slice());
+    }
+
+    #[test]
+    fn encrypt_decrypt_reg_round_trip_scalar() {
+        let params = get_params();
+        let mut client = Client::init(&params);
+        client.generate_secret_keys();
+
+        let mut rng = ChaCha20Rng::from_seed(get_chacha_static_seed());
+        let mut rng_pub = ChaCha20Rng::from_seed([0x42; 32]);
+
+        let scale_k = params.modulus / params.pt_modulus;
+        let msg: u64 = 42;
+        let plaintext = PolyMatrixRaw::single_value(&params, scale_k * msg).ntt();
+
+        let ct = client.encrypt_matrix_reg(&plaintext, &mut rng, &mut rng_pub);
+        let dec = client.decrypt_matrix_reg(&ct).raw();
+
+        let recovered = decrypt_and_rescale(&params, &dec, 0);
+        assert_eq!(recovered, msg, "scalar round-trip failed");
+    }
+
+    #[test]
+    fn encrypt_decrypt_reg_round_trip_zero() {
+        let params = get_params();
+        let mut client = Client::init(&params);
+        client.generate_secret_keys();
+
+        let mut rng = ChaCha20Rng::from_seed(get_chacha_static_seed());
+        let mut rng_pub = ChaCha20Rng::from_seed([0x42; 32]);
+
+        let plaintext = PolyMatrixRaw::zero(&params, 1, 1).ntt();
+        let ct = client.encrypt_matrix_reg(&plaintext, &mut rng, &mut rng_pub);
+        let dec = client.decrypt_matrix_reg(&ct).raw();
+
+        for i in 0..params.poly_len {
+            let recovered = decrypt_and_rescale(&params, &dec, i);
+            assert_eq!(recovered, 0, "zero plaintext coefficient {} != 0", i);
+        }
+    }
+
+    #[test]
+    fn encrypt_decrypt_reg_round_trip_max_value() {
+        let params = get_params();
+        let mut client = Client::init(&params);
+        client.generate_secret_keys();
+
+        let mut rng = ChaCha20Rng::from_seed(get_chacha_static_seed());
+        let mut rng_pub = ChaCha20Rng::from_seed([0x42; 32]);
+
+        let scale_k = params.modulus / params.pt_modulus;
+        let max_msg = params.pt_modulus - 1;
+
+        let mut plaintext = PolyMatrixRaw::zero(&params, 1, 1);
+        for i in 0..params.poly_len {
+            plaintext.data[i] = scale_k * max_msg;
+        }
+        let ct = client.encrypt_matrix_reg(&plaintext.ntt(), &mut rng, &mut rng_pub);
+        let dec = client.decrypt_matrix_reg(&ct).raw();
+
+        for i in 0..params.poly_len {
+            let recovered = decrypt_and_rescale(&params, &dec, i);
+            assert_eq!(
+                recovered, max_msg,
+                "max-value plaintext coefficient {} = {} != {}",
+                i, recovered, max_msg
+            );
+        }
+    }
+
+    #[test]
+    fn encrypt_decrypt_reg_round_trip_full_polynomial() {
+        let params = get_params();
+        let mut client = Client::init(&params);
+        client.generate_secret_keys();
+
+        let mut rng = ChaCha20Rng::from_seed(get_chacha_static_seed());
+        let mut rng_pub = ChaCha20Rng::from_seed([0x42; 32]);
+
+        let scale_k = params.modulus / params.pt_modulus;
+        let mut plaintext = PolyMatrixRaw::zero(&params, 1, 1);
+        for i in 0..params.poly_len {
+            let msg = (i as u64 * 7 + 3) % params.pt_modulus;
+            plaintext.data[i] = scale_k * msg;
+        }
+
+        let ct = client.encrypt_matrix_reg(&plaintext.ntt(), &mut rng, &mut rng_pub);
+        let dec = client.decrypt_matrix_reg(&ct).raw();
+
+        for i in 0..params.poly_len {
+            let expected = (i as u64 * 7 + 3) % params.pt_modulus;
+            let recovered = decrypt_and_rescale(&params, &dec, i);
+            assert_eq!(
+                recovered, expected,
+                "full-poly coefficient {} = {} != {}",
+                i, recovered, expected
+            );
+        }
+    }
+
+    #[test]
+    fn encrypt_decrypt_reg_multiple_columns() {
+        let params = get_params();
+        let mut client = Client::init(&params);
+        client.generate_secret_keys();
+
+        let mut rng = ChaCha20Rng::from_seed(get_chacha_static_seed());
+        let mut rng_pub = ChaCha20Rng::from_seed([0x42; 32]);
+
+        let scale_k = params.modulus / params.pt_modulus;
+        let ncols = 3;
+        let msgs: [u64; 3] = [7, 0, params.pt_modulus - 1];
+
+        let mut plaintext = PolyMatrixRaw::zero(&params, 1, ncols);
+        for c in 0..ncols {
+            plaintext.get_poly_mut(0, c)[0] = scale_k * msgs[c];
+        }
+
+        let ct = client.encrypt_matrix_reg(&plaintext.ntt(), &mut rng, &mut rng_pub);
+        let dec = client.decrypt_matrix_reg(&ct).raw();
+
+        for c in 0..ncols {
+            let recovered = decrypt_and_rescale(&params, &dec, c * params.poly_len);
+            assert_eq!(
+                recovered, msgs[c],
+                "column {} constant term = {} != {}",
+                c, recovered, msgs[c]
+            );
+        }
+    }
+
+    #[test]
+    fn encrypt_decrypt_scaled_reg_round_trip() {
+        let params = get_params();
+        let mut client = Client::init(&params);
+        client.generate_secret_keys();
+
+        let mut rng = ChaCha20Rng::from_seed(get_chacha_static_seed());
+        let mut rng_pub = ChaCha20Rng::from_seed([0x42; 32]);
+
+        let scale_k = params.modulus / params.pt_modulus;
+        let msg: u64 = 100;
+        let plaintext = PolyMatrixRaw::single_value(&params, scale_k * msg).ntt();
+
+        let ct = client.encrypt_matrix_scaled_reg(&plaintext, &mut rng, &mut rng_pub, 1);
+        let dec = client.decrypt_matrix_reg(&ct).raw();
+
+        let recovered = decrypt_and_rescale(&params, &dec, 0);
+        assert_eq!(recovered, msg, "scaled encrypt round-trip failed");
+    }
 }
