@@ -160,6 +160,7 @@ impl DiscreteGaussian {
 mod test {
     use super::*;
     use crate::util::*;
+    use rand::SeedableRng;
 
     #[test]
     fn dg_seems_okay() {
@@ -202,5 +203,377 @@ mod test {
     fn cdf_table_seems_okay() {
         let dg = DiscreteGaussian::init(6.4);
         println!("{:?}", dg.cdf_table);
+    }
+
+    // ----------------------------------------------------------------
+    // CDF table structural invariants
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn cdf_table_is_monotonically_nondecreasing() {
+        for width in [1.0, 3.2, 6.4, 10.0, 25.0] {
+            let dg = DiscreteGaussian::init(width);
+            for i in 1..dg.cdf_table.len() {
+                assert!(
+                    dg.cdf_table[i] >= dg.cdf_table[i - 1],
+                    "CDF not monotonic at index {} for width {}: {} < {}",
+                    i,
+                    width,
+                    dg.cdf_table[i],
+                    dg.cdf_table[i - 1]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cdf_table_last_entry_near_u64_max() {
+        for width in [1.0, 3.2, 6.4, 10.0, 25.0] {
+            let dg = DiscreteGaussian::init(width);
+            let last = *dg.cdf_table.last().unwrap();
+            let threshold = u64::MAX - (u64::MAX / 1000);
+            assert!(
+                last >= threshold,
+                "CDF last entry {} not near u64::MAX for width {}",
+                last,
+                width
+            );
+        }
+    }
+
+    #[test]
+    fn cdf_table_has_correct_length() {
+        for width in [1.0, 3.2, 6.4, 10.0, 25.0] {
+            let dg = DiscreteGaussian::init(width);
+            let expected_len = (2 * dg.max_val + 1) as usize;
+            assert_eq!(
+                dg.cdf_table.len(),
+                expected_len,
+                "CDF table length mismatch for width {}: expected {}, got {}",
+                width,
+                expected_len,
+                dg.cdf_table.len()
+            );
+        }
+    }
+
+    #[test]
+    fn cdf_table_symmetric_around_center() {
+        let dg = DiscreteGaussian::init(6.4);
+        let len = dg.cdf_table.len();
+        let center = len / 2;
+        for i in 1..center {
+            let left_mass = dg.cdf_table[center - i];
+            let right_complement = u64::MAX - dg.cdf_table[center + i - 1];
+            let diff = if left_mass > right_complement {
+                left_mass - right_complement
+            } else {
+                right_complement - left_mass
+            };
+            let tolerance = u64::MAX / 1000;
+            assert!(
+                diff < tolerance,
+                "CDF not symmetric at offset {}: left_mass={}, right_complement={}",
+                i,
+                left_mass,
+                right_complement
+            );
+        }
+    }
+
+    // ----------------------------------------------------------------
+    // max_val computation
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn max_val_scales_with_noise_width() {
+        let dg_small = DiscreteGaussian::init(1.0);
+        let dg_large = DiscreteGaussian::init(10.0);
+        assert!(
+            dg_large.max_val > dg_small.max_val,
+            "larger noise width should produce larger max_val"
+        );
+        assert_eq!(
+            dg_small.max_val,
+            (1.0 * NUM_WIDTHS as f64).ceil() as i64
+        );
+        assert_eq!(
+            dg_large.max_val,
+            (10.0 * NUM_WIDTHS as f64).ceil() as i64
+        );
+    }
+
+    // ----------------------------------------------------------------
+    // Deterministic seeded output
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn sample_is_deterministic_with_same_seed() {
+        let dg = DiscreteGaussian::init(6.4);
+        let modulus = 268369921u64;
+        let seed = get_chacha_static_seed();
+
+        let mut rng1 = ChaCha20Rng::from_seed(seed);
+        let mut rng2 = ChaCha20Rng::from_seed(seed);
+
+        for i in 0..1000 {
+            let v1 = dg.sample(modulus, &mut rng1);
+            let v2 = dg.sample(modulus, &mut rng2);
+            assert_eq!(v1, v2, "sample diverged at iteration {} with same seed", i);
+        }
+    }
+
+    #[test]
+    fn fast_sample_is_deterministic_with_same_seed() {
+        let dg = DiscreteGaussian::init(6.4);
+        let modulus = 268369921u64;
+        let seed = get_chacha_static_seed();
+
+        let mut rng1 = ChaCha20Rng::from_seed(seed);
+        let mut rng2 = ChaCha20Rng::from_seed(seed);
+
+        for i in 0..1000 {
+            let v1 = dg.fast_sample(modulus, &mut rng1);
+            let v2 = dg.fast_sample(modulus, &mut rng2);
+            assert_eq!(
+                v1, v2,
+                "fast_sample diverged at iteration {} with same seed",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn different_seeds_produce_different_sequences() {
+        let dg = DiscreteGaussian::init(6.4);
+        let modulus = 268369921u64;
+
+        let mut rng1 = ChaCha20Rng::from_seed([0u8; 32]);
+        let mut rng2 = ChaCha20Rng::from_seed([1u8; 32]);
+
+        let mut same_count = 0;
+        let trials = 100;
+        for _ in 0..trials {
+            if dg.sample(modulus, &mut rng1) == dg.sample(modulus, &mut rng2) {
+                same_count += 1;
+            }
+        }
+        assert!(
+            same_count < trials,
+            "different seeds produced identical sequences"
+        );
+    }
+
+    // ----------------------------------------------------------------
+    // Output range validation
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn sample_output_always_in_modulus_range() {
+        let dg = DiscreteGaussian::init(6.4);
+        let mut rng = ChaCha20Rng::from_seed(get_chacha_static_seed());
+
+        for modulus in [101u64, 1021, 65537, 268369921, 249561089] {
+            for _ in 0..1000 {
+                let val = dg.sample(modulus, &mut rng);
+                assert!(
+                    val < modulus,
+                    "sample {} out of range [0, {}) for modulus {}",
+                    val,
+                    modulus,
+                    modulus
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn fast_sample_output_always_in_modulus_range() {
+        let dg = DiscreteGaussian::init(6.4);
+        let mut rng = ChaCha20Rng::from_seed(get_chacha_static_seed());
+
+        for modulus in [101u64, 1021, 65537, 268369921, 249561089] {
+            for _ in 0..1000 {
+                let val = dg.fast_sample(modulus, &mut rng);
+                assert!(
+                    val < modulus,
+                    "fast_sample {} out of range [0, {})",
+                    val,
+                    modulus
+                );
+            }
+        }
+    }
+
+    // ----------------------------------------------------------------
+    // Extreme noise widths
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn very_small_noise_width() {
+        let dg = DiscreteGaussian::init(0.5);
+        assert!(dg.max_val >= 1);
+        assert!(dg.cdf_table.len() >= 3);
+
+        let mut rng = ChaCha20Rng::from_seed(get_chacha_static_seed());
+        let modulus = 268369921u64;
+        for _ in 0..500 {
+            let val = dg.sample(modulus, &mut rng);
+            assert!(val < modulus);
+        }
+    }
+
+    #[test]
+    fn large_noise_width() {
+        let dg = DiscreteGaussian::init(100.0);
+        assert_eq!(dg.max_val, (100.0 * NUM_WIDTHS as f64).ceil() as i64);
+        assert_eq!(dg.cdf_table.len(), (2 * dg.max_val + 1) as usize);
+
+        let mut rng = ChaCha20Rng::from_seed(get_chacha_static_seed());
+        let modulus = 268369921u64;
+        for _ in 0..500 {
+            let val = dg.sample(modulus, &mut rng);
+            assert!(val < modulus);
+        }
+    }
+
+    // ----------------------------------------------------------------
+    // Boundary RNG values via constant-time sample path
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn sample_with_rng_returning_zero() {
+        let dg = DiscreteGaussian::init(6.4);
+        let modulus = 268369921u64;
+
+        let mut rng = ChaCha20Rng::from_seed([0u8; 32]);
+        let val = dg.sample(modulus, &mut rng);
+        assert!(val < modulus);
+    }
+
+    #[test]
+    fn sample_with_rng_returning_high_values() {
+        let dg = DiscreteGaussian::init(6.4);
+        let modulus = 268369921u64;
+
+        let mut rng = ChaCha20Rng::from_seed([0xFFu8; 32]);
+        let val = dg.sample(modulus, &mut rng);
+        assert!(val < modulus);
+    }
+
+    // ----------------------------------------------------------------
+    // sample_matrix fills all entries
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn sample_matrix_fills_all_entries() {
+        let params = get_test_params();
+        let dg = DiscreteGaussian::init(params.noise_width);
+        let mut rng = ChaCha20Rng::from_seed(get_chacha_static_seed());
+
+        let mut mat = PolyMatrixRaw::zero(&params, 2, 2);
+        dg.sample_matrix(&mut mat, &mut rng);
+
+        let total_entries = mat.data.len();
+        let zero_count = mat.data.as_slice().iter().filter(|&&x| x == 0).count();
+        assert!(
+            zero_count < total_entries,
+            "sample_matrix left all entries at zero"
+        );
+        let zero_ratio = zero_count as f64 / total_entries as f64;
+        assert!(
+            zero_ratio < 0.5,
+            "sample_matrix left {:.1}% entries at zero, expected most to be nonzero",
+            zero_ratio * 100.0
+        );
+    }
+
+    #[test]
+    fn sample_matrix_values_in_modulus_range() {
+        let params = get_test_params();
+        let dg = DiscreteGaussian::init(params.noise_width);
+        let mut rng = ChaCha20Rng::from_seed(get_chacha_static_seed());
+
+        let mut mat = PolyMatrixRaw::zero(&params, 2, 2);
+        dg.sample_matrix(&mut mat, &mut rng);
+
+        for &val in mat.data.as_slice() {
+            assert!(
+                val < params.modulus,
+                "sample_matrix produced {} >= modulus {}",
+                val,
+                params.modulus
+            );
+        }
+    }
+
+    // ----------------------------------------------------------------
+    // Distribution agreement between sample and fast_sample
+    // ----------------------------------------------------------------
+
+    #[test]
+    fn sample_and_fast_sample_produce_similar_distributions() {
+        let dg = DiscreteGaussian::init(6.4);
+        let modulus = 268369921u64;
+        let trials = 20000;
+
+        let mut rng_ct = ChaCha20Rng::from_seed(get_chacha_static_seed());
+        let mut rng_fast = ChaCha20Rng::from_seed([42u8; 32]);
+
+        let to_signed = |val: u64| -> i64 {
+            let v = val as i64;
+            if v >= (modulus as i64) / 2 {
+                v - modulus as i64
+            } else {
+                v
+            }
+        };
+
+        let mut sum_ct: i64 = 0;
+        let mut sum_sq_ct: f64 = 0.0;
+        let mut sum_fast: i64 = 0;
+        let mut sum_sq_fast: f64 = 0.0;
+
+        for _ in 0..trials {
+            let v_ct = to_signed(dg.sample(modulus, &mut rng_ct));
+            sum_ct += v_ct;
+            sum_sq_ct += (v_ct as f64).powi(2);
+
+            let v_fast = to_signed(dg.fast_sample(modulus, &mut rng_fast));
+            sum_fast += v_fast;
+            sum_sq_fast += (v_fast as f64).powi(2);
+        }
+
+        let mean_ct = sum_ct as f64 / trials as f64;
+        let mean_fast = sum_fast as f64 / trials as f64;
+        let var_ct = sum_sq_ct / trials as f64 - mean_ct.powi(2);
+        let var_fast = sum_sq_fast / trials as f64 - mean_fast.powi(2);
+
+        let expected_std = 6.4 / f64::sqrt(2.0 * PI);
+        let expected_var = expected_std.powi(2);
+
+        assert!(
+            mean_ct.abs() < 1.0,
+            "constant-time sample mean {} too far from 0",
+            mean_ct
+        );
+        assert!(
+            mean_fast.abs() < 1.0,
+            "fast_sample mean {} too far from 0",
+            mean_fast
+        );
+
+        assert!(
+            (var_ct - expected_var).abs() < expected_var * 0.2,
+            "constant-time sample variance {} too far from expected {}",
+            var_ct,
+            expected_var
+        );
+        assert!(
+            (var_fast - expected_var).abs() < expected_var * 0.2,
+            "fast_sample variance {} too far from expected {}",
+            var_fast,
+            expected_var
+        );
     }
 }
